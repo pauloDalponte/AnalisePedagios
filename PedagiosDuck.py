@@ -21,7 +21,7 @@ try:
         print("Conexao bem-sucedida!")
 except Exception as e:
     print(f"Ocorreu um erro ao tentar conectar ao SQL Server: {e}")
-
+    
 queryMdfe= """
     SELECT mdfe.CdEmpresa,mdfe.CdSeqMDFe,mdfe.InSitSefaz,mdfe.DtIntegracao,int.nrplaca FROM GTCMFESF mdfe
     left join GTCMFE int on mdfe.CdSeqMDFe = int.CdSeqMDFe and mdfe.CdEmpresa = int.CdEmpresa 
@@ -29,6 +29,16 @@ queryMdfe= """
     ORDER BY mdfe.CdEmpresa,mdfe.CdSeqMDFe
 """
 mdfeEmitidos = pd.read_sql(queryMdfe, engine)
+
+queryMdfeAtua= """
+    SELECT man.datahora,man.updated_at,vei.placa
+    FROM atua_prod.dbo.manifesto man
+    INNER JOIN atua_prod.dbo.veiculos vei ON vei.Idatua = man.idVeiculo 
+    where man.datahora >= DATEADD(DAY, -180, GETDATE())
+    ORDER BY man.datahora
+"""
+mdfeEmitidosAtua = pd.read_sql(queryMdfeAtua, engine)
+
 
 queryPedagios = """select cod_transacao,placa,estabelecimento,endereco,valor_estorno,status_estorno,dataContestacao,dataEstorno
                     from b011ped 
@@ -39,6 +49,9 @@ contestacoesPendentes = pd.read_sql(queryPedagios,engine)
 duckdb_conn = duckdb.connect(':memory:')
 duckdb_conn.execute("CREATE TABLE IF NOT EXISTS GTCMFESF (CdEmpresa INTEGER, CdSeqMDFe INTEGER, InSitSefaz INTEGER, DtIntegracao TIMESTAMP, nrPlaca varchar(10))")
 duckdb_conn.execute("INSERT INTO GTCMFESF SELECT * FROM mdfeEmitidos")
+
+duckdb_conn.execute("CREATE TABLE IF NOT EXISTS manifestos (dataHora TIMESTAMP,updated_at TIMESTAMP, placa varchar(10))")
+duckdb_conn.execute("INSERT INTO manifestos SELECT * FROM mdfeEmitidosAtua")
 
 duckdb_conn.execute("""create table if not exists b011ped (cod_transacao varchar(100),
                     placa varchar(10),
@@ -66,7 +79,7 @@ def verificar_contestacoes(row, duckdb_conn, engine):
         
     if not contestacaoPendente.empty:
         try:
-            with engine.begin() as connection:  # `begin` inicia uma transação e faz commit automaticamente
+            with engine.begin() as connection: 
                 query_update = text("""
                     UPDATE b011ped 
                     SET status_estorno = 'S', dataEstorno = GETDATE() 
@@ -74,7 +87,6 @@ def verificar_contestacoes(row, duckdb_conn, engine):
                 """)
                 
                 connection.execute(query_update, {"transacao": transacao})
-                print(f"Transacao {transacao} atualizada com sucesso.")
         
         except Exception as e:
             print(f"Ocorreu um erro ao atualizar a transação {transacao}: {e}")
@@ -95,9 +107,43 @@ def verificar_mdfe(row, duckdb_conn):
     mdfe_aberto = duckdb_conn.execute(query_mdfe).df()
     return len(mdfe_aberto) > 0
 
+def verificar_mdfe_Atua(row, duckdb_conn):
+    placa = row['Placa']
+    data_passagem = row['Data Passagem']
+
+    query_mdfe = f"""
+        SELECT mdfe.placa
+        FROM manifestos mdfe
+        WHERE mdfe.placa = '{placa}'
+        AND mdfe.datahora < '{data_passagem}'
+        AND (
+       mdfe.updated_at IS NULL OR
+        mdfe.updated_at  > '{data_passagem}')
+    """
+    mdfe_aberto = duckdb_conn.execute(query_mdfe).df()
+    return len(mdfe_aberto) > 0
+
+def verificar_mdfe_SP_Atua(row, duckdb_conn):
+    placa = row['PLACA']
+    data_passagem = row['Data Passagem']
+    
+
+    query_mdfe = f"""
+        SELECT mdfe.placa
+        FROM manifestos mdfe
+        WHERE mdfe.placa = '{placa}'
+        AND mdfe.datahora < '{data_passagem}'
+        AND (
+       mdfe.updated_at IS NULL OR
+        mdfe.updated_at  > '{data_passagem}')
+    """
+    mdfe_aberto = duckdb_conn.execute(query_mdfe).df()
+    return len(mdfe_aberto) > 0
+
 def verificar_mdfe_SP(row, duckdb_conn):
     placa = row['PLACA']
     data_passagem = row['Data Passagem']
+    
     query_mdfe = f"""
         SELECT mdfe.CdEmpresa, mdfe.CdSeqMDFe, mdfe.InSitSefaz, mdfe.DtIntegracao,mdfe.nrplaca
         FROM GTCMFESF mdfe
@@ -113,98 +159,21 @@ def verificar_mdfe_SP(row, duckdb_conn):
     mdfe_aberto = duckdb_conn.execute(query_mdfe).df()
     return len(mdfe_aberto) > 0
 
+
 def busca_eixos(lista_placas,engine):
     placas_str = ','.join([f"'{placa}'" for placa in lista_placas])
-    query_eixos = f"""
-        SELECT V.NrPlaca as placa
-            ,E.NrPlacaReboque1 as Reb1
-            ,E.NrPlacaReboque2 as Reb2
-            ,E.NrPlacaReboque3 as Reb3
-            ,(  SELECT MM.DsModelo
-                FROM SISVEICU VV
-                LEFT JOIN SISMdVei MM ON VV.CdModCarroceria = MM.CdModelo
-                WHERE VV.NrPlaca = (SELECT CASE WHEN (E.NrPlacaReboque3 IS NOT NULL AND len(E.NrPlacaReboque3) > 1) THEN E.NrPlacaReboque3
-                                                WHEN (E.NrPlacaReboque2 IS NOT NULL AND len(E.NrPlacaReboque2) > 1) THEN E.NrPlacaReboque2
-                                                WHEN (E.NrPlacaReboque1 IS NOT NULL AND len(E.NrPlacaReboque1) > 1) THEN E.NrPlacaReboque1
-                                                ELSE V.NrPlaca END)
-            ) AS TIPO
-            ,(  SELECT (CASE MM.CdModelo   
-                        WHEN 8041 THEN 3
-                        WHEN 8042 THEN 4
-                        WHEN 8043 THEN 6
-                        WHEN 8044 THEN 5
-                        WHEN 8045 THEN 7
-                        WHEN 8046 THEN 6
-                        WHEN 8047 THEN 9
-                        WHEN 8048 THEN 9
-                        WHEN 8049 THEN 4
-                        WHEN 8050 THEN 6
-                        WHEN 8051 THEN 3
-                        WHEN 8052 THEN 9
-                        WHEN 8107 THEN 7
-                        WHEN 8142 THEN 6
-                        WHEN 8147 THEN 7
-                        WHEN 8149 THEN 9
-                        WHEN 8166 THEN 9
-                        WHEN 8167 THEN 3
-                        WHEN 8172 THEN 9
-                        WHEN 125575 THEN 4
-                        WHEN 125574 THEN 5
-                        WHEN 125573 THEN 5
-                        WHEN 125572 THEN 4
-                        WHEN 125568 THEN 7
-                        WHEN 125601 THEN 4
-            END)
-                FROM SISVEICU VV
-                LEFT JOIN SISMdVei MM ON VV.CdModCarroceria = MM.CdModelo
-                WHERE VV.NrPlaca = (SELECT CASE WHEN (E.NrPlacaReboque3 IS NOT NULL AND len(E.NrPlacaReboque3) > 1) THEN E.NrPlacaReboque3
-                                                WHEN (E.NrPlacaReboque2 IS NOT NULL AND len(E.NrPlacaReboque2) > 1) THEN E.NrPlacaReboque2
-                                                WHEN (E.NrPlacaReboque1 IS NOT NULL AND len(E.NrPlacaReboque1) > 1) THEN E.NrPlacaReboque1
-                                                ELSE V.NrPlaca END)
-            ) AS Qtd_Eixos
-            ,(  SELECT (CASE MM.CdModelo   
-                        WHEN 8041 THEN 2
-                        WHEN 8042 THEN 2
-                        WHEN 8043 THEN 4
-                        WHEN 8044 THEN 3
-                        WHEN 8045 THEN 4
-                        WHEN 8046 THEN 4
-                        WHEN 8047 THEN 7
-                        WHEN 8048 THEN 7
-                        WHEN 8049 THEN 2
-                        WHEN 8050 THEN 4
-                        WHEN 8051 THEN 2
-                        WHEN 8052 THEN 7
-                        WHEN 8107 THEN 4
-                        WHEN 8142 THEN 4
-                        WHEN 8147 THEN 4
-                        WHEN 8149 THEN 7
-                        WHEN 8166 THEN 7
-                        WHEN 8167 THEN 2
-                        WHEN 8172 THEN 7
-                        WHEN 125575 THEN 2
-                        WHEN 125574 THEN 3
-                        WHEN 125573 THEN 3
-                        WHEN 125572 THEN 2
-                        WHEN 125568 THEN 4
-                        WHEN 125601 THEN 2
-            END)
-                FROM SISVEICU VV
-                LEFT JOIN SISMdVei MM ON VV.CdModCarroceria = MM.CdModelo
-                WHERE VV.NrPlaca = (SELECT CASE WHEN (E.NrPlacaReboque3 IS NOT NULL AND len(E.NrPlacaReboque3) > 1) THEN E.NrPlacaReboque3
-                                                WHEN (E.NrPlacaReboque2 IS NOT NULL AND len(E.NrPlacaReboque2) > 1) THEN E.NrPlacaReboque2
-                                                WHEN (E.NrPlacaReboque1 IS NOT NULL AND len(E.NrPlacaReboque1) > 1) THEN E.NrPlacaReboque1
-                                                ELSE V.NrPlaca END)
-            ) AS Qtd_Eixos_vazio
-        FROM SISVeicu V
-        LEFT JOIN GFVENGAT E ON E.NrPlaca = V.NrPlaca 
-            AND E.DtEngate = (SELECT TOP 1 DtEngate FROM GFVENGAT WHERE NrPlaca = V.NrPlaca ORDER BY DtEngate DESC,HrEngate DESC)
-            AND E.HrEngate = (SELECT TOP 1 HrEngate FROM GFVENGAT WHERE NrPlaca = V.NrPlaca ORDER BY DtEngate DESC,HrEngate DESC)  
-        WHERE V.NrPlaca in ({placas_str}) 
-    """
-    resultados = pd.read_sql(query_eixos, engine)
     
-    dict_placas_eixos = dict(zip(resultados['placa'], resultados['Qtd_Eixos_vazio']))
+    query_eixos = f"""
+        select placa,nreixos,nrEixosVazio,tipoApelido
+        from atua_prod.dbo.veiculos V
+        WHERE V.placa in ({placas_str}) 
+    """
+    try:
+        resultados = pd.read_sql(query_eixos, engine)
+    except Exception as e:
+        print("Erro no pd.read_sql:", e)
+
+    dict_placas_eixos = dict(zip(resultados['placa'], resultados['nrEixosVazio']))
     
     return dict_placas_eixos
 
@@ -250,21 +219,24 @@ def processar_planilha(input_file, output_file):
         pedagios_df['Quantidade Eixos Vazio'] = pedagios_df['Quantidade Eixos Vazio'].astype(int)
         
         pedagios_df['mdfe_aberto'] = pedagios_df.apply(lambda row: verificar_mdfe(row, duckdb_conn), axis=1)
+        pedagios_df['mdfe_aberto_Atua'] = pedagios_df.apply(lambda row: verificar_mdfe_Atua(row, duckdb_conn), axis=1)
         
-        pedagios_df = pedagios_df[pedagios_df['mdfe_aberto']!= 'True']
+        pedagios_df = pedagios_df[
+                        (pedagios_df['mdfe_aberto'] == False) & 
+                        (pedagios_df['mdfe_aberto_Atua'] == False) &
+                        (pedagios_df['Número de Eixos Cobrados'] > pedagios_df['Quantidade Eixos Vazio'])
+                        ]
+
         pedagios_df['Valor da Transação(R$)'] = pedagios_df['Valor da Transação(R$)'].str.replace(',', '.', regex=False) 
         pedagios_df['Valor da Transação(R$)'] = pd.to_numeric(pedagios_df['Valor da Transação(R$)'], errors='coerce') 
         pedagios_df['Valor por eixo'] = pedagios_df['Valor da Transação(R$)'] / pedagios_df['Número de Eixos Cobrados'].round(2)
         pedagios_df['Valor Correto'] = (pedagios_df['Quantidade Eixos Vazio'] * pedagios_df['Valor por eixo']).round(2)
         pedagios_df['Valor Estorno'] = (pedagios_df['Valor da Transação(R$)'] - pedagios_df['Valor Correto']).round(2)
-        
-        estornos_df= pedagios_df[(pedagios_df['mdfe_aberto'] == False) & 
-                                    (pedagios_df['Número de Eixos Cobrados'] > pedagios_df['Quantidade Eixos Vazio'])]
-        
-        estornos_df = estornos_df[estornos_df['Quantidade Eixos Vazio']!= 0]
+          
+        estornos_df = pedagios_df[pedagios_df['Quantidade Eixos Vazio']!= 0]
         
         estornos_df = estornos_df.drop(columns=['Data do Processamento','Tipo de Transação','Tipo de veículo','Marca do veículo','Modelo do veículo',
-                                                'Categoria Cadastrada','mdfe_aberto','Valor por eixo','Valor Correto','Quantidade Eixos Vazio',
+                                                'Categoria Cadastrada','mdfe_aberto','mdfe_aberto_Atua','Valor por eixo','Valor Correto','Quantidade Eixos Vazio',
                                                 'Categoria cobrada','Valor utilizado de vale-pedágio (R$)','Valor cobrado (R$)',
                                                 'Valor da Transação(R$)','Data Passagem','Número de Eixos Cobrados'])
         estornos_df['status_estorno'] = 'N'
@@ -280,24 +252,15 @@ def processar_planilha(input_file, output_file):
         }, inplace=True)
         estornos_df = estornos_df.fillna('')
 
-        try:
-            estornos_df.to_sql('b011ped', con=engine, index=False, if_exists='append')
-            print("Dados inseridos com sucesso no SQL Server.")
-        except Exception as e:
-            print(f"Erro ao inserir dados no SQL Server: {e}")
-            
-        print('Aqui')
-            
         revisa_estorno = pedagios_df[pedagios_df['Tipo de Transação'] == 'Estorno Pedágio']
 
         revisa_estorno.apply(lambda row: verificar_contestacoes(row, duckdb_conn,engine), axis=1)
-        print('Aqui')
-        contestacao_df = pedagios_df[(pedagios_df['mdfe_aberto'] == False) & 
-                                    (pedagios_df['Número de Eixos Cobrados'] > pedagios_df['Quantidade Eixos Vazio'])]
+
+        contestacao_df = pedagios_df
         
         contestacao_df = contestacao_df.drop(columns=['Valor por eixo'])
-        print('Aqui')
-        colunas = ['Código da transação','Data do Processamento','Data Passagem','Tipo de Transação','Placa','Tipo de veículo','Marca do veículo','Modelo do veículo','Categoria Cadastrada','Categoria cobrada','Estabelecimento','Endereço','Valor da Transação(R$)','Valor utilizado de vale-pedágio (R$)','Valor cobrado (R$)','Número de Eixos Cobrados','Quantidade Eixos Vazio','mdfe_aberto','Valor Correto','Valor Estorno']
+
+        colunas = ['Código da transação','Data do Processamento','Data Passagem','Tipo de Transação','Placa','Tipo de veículo','Marca do veículo','Modelo do veículo','Categoria Cadastrada','Categoria cobrada','Estabelecimento','Endereço','Valor da Transação(R$)','Valor utilizado de vale-pedágio (R$)','Valor cobrado (R$)','Número de Eixos Cobrados','Quantidade Eixos Vazio','mdfe_aberto','mdfe_aberto_Atua','Valor Correto','Valor Estorno']
         contestacao_df = contestacao_df[colunas]
         contestacao_df = contestacao_df[contestacao_df['Quantidade Eixos Vazio']!= 0]
 
@@ -316,18 +279,22 @@ def escolher_arquivo():
         if output_arquivo:
             processar_planilha(arquivo, output_arquivo)
  
-
 def processar_planilha_sem_parar(input_file, output_file):
     try:
         pedagios_df = pd.read_excel(input_file,sheet_name='PASSAGENS PEDÁGIO', engine='xlrd')  
+        
         pedagios_df = pedagios_df.drop(columns=['PREFIXO'])
 
+        #juntar data e hora e formatar para comparar no select futuro
+        
         pedagios_df['Data Passagem'] = pedagios_df['DATA'] + ' ' + pedagios_df['HORA']
         pedagios_df['Data Passagem'] = pd.to_datetime(pedagios_df['Data Passagem'], format='%d/%m/%Y %H:%M:%S')
-        
-        
+    
+        #pegar as placas que tem na planilha para depois pegar os eixos
         lista_placas = list(pedagios_df['PLACA'].unique())
         dict_placas_eixos = busca_eixos(lista_placas, engine)
+        
+        #quantidade de eixos que a placa tem 
         pedagios_df['Quantidade Eixos Vazio'] = pedagios_df.apply(lambda row: obter_quantidade_eixos_SP(row, dict_placas_eixos), axis=1)
         
         pedagios_df['Quantidade Eixos Vazio'] = pd.to_numeric(pedagios_df['Quantidade Eixos Vazio'], errors='coerce')
@@ -335,29 +302,34 @@ def processar_planilha_sem_parar(input_file, output_file):
         pedagios_df['Quantidade Eixos Vazio'] = pedagios_df['Quantidade Eixos Vazio'].astype(int)
         
         pedagios_df['mdfe_aberto'] = pedagios_df.apply(lambda row: verificar_mdfe_SP(row, duckdb_conn), axis=1)
-        
+        pedagios_df['mdfe_aberto_Atua'] = pedagios_df.apply(lambda row: verificar_mdfe_SP_Atua(row, duckdb_conn), axis=1)
         pedagios_df['VALOR'] = pedagios_df['VALOR'].replace(',', '.', regex=False) 
         pedagios_df['VALOR'] = pd.to_numeric(pedagios_df['VALOR'], errors='coerce')
         pedagios_df['CATEG'] = pd.to_numeric(pedagios_df['CATEG'], errors='coerce')
-         
+        
+        #converte as categorias do sem parar em quantidades de eixos cobrados
         pedagios_df.loc[pedagios_df['CATEG'] == 61, 'CATEG'] = 7
         pedagios_df.loc[pedagios_df['CATEG'] == 62, 'CATEG'] = 8
         pedagios_df.loc[pedagios_df['CATEG'] == 63, 'CATEG'] = 9
         pedagios_df.loc[pedagios_df['CATEG'] == 64, 'CATEG'] = 10
-
+        #calcula o valor por eixo cobrado
         pedagios_df['Valor por eixo'] = pedagios_df['VALOR'] / pedagios_df['CATEG'].round(2)
 
+        #calcula o valor que deveria ter sido cobrado pela praça de pedagio
         pedagios_df['Valor Correto'] = (pedagios_df['Quantidade Eixos Vazio'] * pedagios_df['Valor por eixo']).round(2)
 
+        #diferenca de valor cobrado com valor correto 
         pedagios_df['Valor Estorno'] = (pedagios_df['VALOR'] - pedagios_df['Valor Correto']).round(2)
         pedagios_df['Fatura'] = ''
-        
-        colunas = ['PLACA', 'TAG','Fatura','DATA','HORA','RODOVIA','PRAÇA','VALOR','Valor Correto','Valor Estorno','CATEG','Quantidade Eixos Vazio','mdfe_aberto','Valor por eixo','Data Passagem','MARCA']
+        colunas = ['PLACA', 'TAG','Fatura','DATA','HORA','RODOVIA','PRAÇA','VALOR','Valor Correto','Valor Estorno','CATEG','Quantidade Eixos Vazio','mdfe_aberto','mdfe_aberto_Atua','Valor por eixo','Data Passagem','MARCA']
         pedagios_df = pedagios_df[colunas]
-        
-        contestacao_df = pedagios_df[(pedagios_df['mdfe_aberto'] == False) & 
-                                    (pedagios_df['CATEG'] > pedagios_df['Quantidade Eixos Vazio'])
-                                    ]
+        contestacao_df = pedagios_df[
+                                    (pedagios_df['mdfe_aberto'] == False) &
+                                    (pedagios_df['mdfe_aberto_Atua'] == False) & #se nao tinha mdfe aberto na atua
+                                    (pedagios_df['CATEG'] > pedagios_df['Quantidade Eixos Vazio']) #se a quantidade de eixos cobrado é maior que a quantidade vazia da carreta
+                                ]
+
+        #remove colunas desnecessárias
         contestacao_df = contestacao_df.drop(columns=['Valor por eixo','Data Passagem','MARCA'])
         contestacao_df.to_csv(output_file, index=False, sep=';', encoding='utf-8')
         messagebox.showinfo("Concluído", f"Análise concluída. Verifique o arquivo '{output_file}'.")
