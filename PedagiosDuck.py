@@ -1,18 +1,19 @@
-import pandas as pd 
+import pandas as pd
+import pandas as pd
 from sqlalchemy import create_engine,text
 import tkinter as tk
 from tkinter import filedialog
 from tkinter import messagebox
-import duckdb 
+import duckdb
 
-server = '192.168.0.210' 
-database = 'softran_bendo'  
-username = 'pedagio'    
-password = 'pedagioBendo' 
+server = '192.168.0.210'
+database = 'softran_bendo'
+username = 'pedagio'
+password = 'pedagioBendo'
 
 connection_string = f'mssql+pyodbc://{username}:{password}@{server}/{database}?driver=ODBC+Driver+17+for+SQL+Server'
 
-placas = [] 
+placas = []
 
 engine = create_engine(connection_string)
 
@@ -21,10 +22,10 @@ try:
         print("Conexao bem-sucedida!")
 except Exception as e:
     print(f"Ocorreu um erro ao tentar conectar ao SQL Server: {e}")
-    
+
 queryMdfe= """
     SELECT mdfe.CdEmpresa,mdfe.CdSeqMDFe,mdfe.InSitSefaz,mdfe.DtIntegracao,int.nrplaca FROM GTCMFESF mdfe
-    left join GTCMFE int on mdfe.CdSeqMDFe = int.CdSeqMDFe and mdfe.CdEmpresa = int.CdEmpresa 
+    left join GTCMFE int on mdfe.CdSeqMDFe = int.CdSeqMDFe and mdfe.CdEmpresa = int.CdEmpresa
     where (mdfe.InSitSefaz = 100 or mdfe.InSitSefaz = 135 ) and mdfe.DtIntegracao >= DATEADD(DAY, -180, GETDATE())
     ORDER BY mdfe.CdEmpresa,mdfe.CdSeqMDFe
 """
@@ -33,17 +34,16 @@ mdfeEmitidos = pd.read_sql(queryMdfe, engine)
 queryMdfeAtua= """
     SELECT man.datahora,man.updated_at,vei.placa
     FROM atua_prod.dbo.manifesto man
-    INNER JOIN atua_prod.dbo.veiculos vei ON vei.Idatua = man.idVeiculo 
+    INNER JOIN atua_prod.dbo.veiculos vei ON vei.Idatua = man.idVeiculo
     where man.datahora >= DATEADD(DAY, -180, GETDATE())
     ORDER BY man.datahora
 """
 mdfeEmitidosAtua = pd.read_sql(queryMdfeAtua, engine)
 
-
 queryPedagios = """select cod_transacao,placa,estabelecimento,endereco,valor_estorno,status_estorno,dataContestacao,dataEstorno
-                    from b011ped 
+                    from b011ped
                     where status_estorno = 'N'"""
-                    
+
 contestacoesPendentes = pd.read_sql(queryPedagios,engine)
 
 duckdb_conn = duckdb.connect(':memory:')
@@ -73,10 +73,10 @@ def verificar_contestacoes(row, duckdb_conn, engine):
         WHERE cod_transacao = '{transacao}'
     """
     contestacaoPendente = duckdb_conn.execute(query_contestacao).df()
-    
+
     if contestacaoPendente.empty:
         print(f"Nenhuma contestacao pendente para a transacao {transacao}.")
-        
+
     if not contestacaoPendente.empty:
         try:
             with engine.begin() as connection: 
@@ -85,9 +85,9 @@ def verificar_contestacoes(row, duckdb_conn, engine):
                     SET status_estorno = 'S', dataEstorno = GETDATE() 
                     WHERE cod_transacao = :transacao
                 """)
-                
+
                 connection.execute(query_update, {"transacao": transacao})
-        
+
         except Exception as e:
             print(f"Ocorreu um erro ao atualizar a transação {transacao}: {e}")
 
@@ -117,7 +117,7 @@ def verificar_mdfe_Atua(row, duckdb_conn):
         WHERE mdfe.placa = '{placa}'
         AND mdfe.datahora < '{data_passagem}'
         AND (
-       mdfe.updated_at IS NULL OR
+        mdfe.updated_at IS NULL OR
         mdfe.updated_at  > '{data_passagem}')
     """
     mdfe_aberto = duckdb_conn.execute(query_mdfe).df()
@@ -126,7 +126,7 @@ def verificar_mdfe_Atua(row, duckdb_conn):
 def verificar_mdfe_SP_Atua(row, duckdb_conn):
     placa = row['PLACA']
     data_passagem = row['Data Passagem']
-    
+
 
     query_mdfe = f"""
         SELECT mdfe.placa
@@ -134,7 +134,7 @@ def verificar_mdfe_SP_Atua(row, duckdb_conn):
         WHERE mdfe.placa = '{placa}'
         AND mdfe.datahora < '{data_passagem}'
         AND (
-       mdfe.updated_at IS NULL OR
+        mdfe.updated_at IS NULL OR
         mdfe.updated_at  > '{data_passagem}')
     """
     mdfe_aberto = duckdb_conn.execute(query_mdfe).df()
@@ -143,15 +143,15 @@ def verificar_mdfe_SP_Atua(row, duckdb_conn):
 def verificar_mdfe_SP(row, duckdb_conn):
     placa = row['PLACA']
     data_passagem = row['Data Passagem']
-    
+
     query_mdfe = f"""
         SELECT mdfe.CdEmpresa, mdfe.CdSeqMDFe, mdfe.InSitSefaz, mdfe.DtIntegracao,mdfe.nrplaca
         FROM GTCMFESF mdfe
         WHERE mdfe.nrplaca = '{placa}'
         AND mdfe.InSitSefaz = 100 AND mdfe.DtIntegracao < '{data_passagem}'
         AND NOT EXISTS (
-            SELECT * 
-            FROM GTCMFESF mdfe2 
+            SELECT *
+            FROM GTCMFESF mdfe2
             WHERE mdfe2.cdempresa = mdfe.CdEmpresa
             AND mdfe2.cdseqmdfe = mdfe.CdSeqMDFe AND mdfe2.insitsefaz = 135 AND mdfe2.dtintegracao < '{data_passagem}'
         )ORDER BY mdfe.DtIntegracao
@@ -162,11 +162,11 @@ def verificar_mdfe_SP(row, duckdb_conn):
 
 def busca_eixos(lista_placas,engine):
     placas_str = ','.join([f"'{placa}'" for placa in lista_placas])
-    
+
     query_eixos = f"""
         select placa,nreixos,nrEixosVazio,tipoApelido
         from atua_prod.dbo.veiculos V
-        WHERE V.placa in ({placas_str}) 
+        WHERE V.placa in ({placas_str})
     """
     try:
         resultados = pd.read_sql(query_eixos, engine)
@@ -174,14 +174,14 @@ def busca_eixos(lista_placas,engine):
         print("Erro no pd.read_sql:", e)
 
     dict_placas_eixos = dict(zip(resultados['placa'], resultados['nrEixosVazio']))
-    
+
     return dict_placas_eixos
 
-def obter_quantidade_eixos(row, dict_placas_eixos):   
+def obter_quantidade_eixos(row, dict_placas_eixos):
     placa = row['Placa']
     return dict_placas_eixos.get(placa, 0)
 
-def obter_quantidade_eixos_SP(row, dict_placas_eixos):   
+def obter_quantidade_eixos_SP(row, dict_placas_eixos):
     placa = row['PLACA']
     return dict_placas_eixos.get(placa, 0)
 
@@ -194,20 +194,19 @@ def processar_planilha(input_file, output_file):
         pedagios_df = pedagios_df.drop(columns=['Tipo De Tag', 'Apelido', 'Hierarquia'])
         pedagios_df = pedagios_df[pedagios_df.duplicated(subset=['Código da transação'], keep=False) == False]
         # pedagios_df = pedagios_df.iloc[:150]
-     
         pedagios_df['Número de Eixos Cobrados'] = pedagios_df['Categoria cobrada'].str.extract(r'(\d)')
         pedagios_df = pedagios_df.dropna(subset=['Número de Eixos Cobrados'])
         pedagios_df['Número de Eixos Cobrados'] = pedagios_df['Número de Eixos Cobrados'].astype(int)
-        
+
         pedagios_df['Data Passagem'] = pedagios_df['Data da Transação'] + ' ' + pedagios_df['Hora da Transação']
         pedagios_df['Data Passagem'] = pd.to_datetime(pedagios_df['Data Passagem'], format='%d/%m/%Y %H:%M:%S')
         pedagios_df = pedagios_df.drop(columns=['Data da Transação', 'Hora da Transação'])
-        
+
         pedagios_df['Data do Processamento'] = pd.to_datetime(pedagios_df['Data Passagem'], format='%d/%m/%Y %H:%M:%S')
 
-        pedagios_df = pedagios_df[pedagios_df['Placa']!= 'QIZ4E82']                
-        pedagios_df = pedagios_df[pedagios_df['Tipo de veículo']!= 'Passeio']      
-        pedagios_df = pedagios_df[pedagios_df['Tipo de veículo']!= 'Ônibus']       
+        pedagios_df = pedagios_df[pedagios_df['Placa']!= 'QIZ4E82']
+        pedagios_df = pedagios_df[pedagios_df['Tipo de veículo']!= 'Passeio']
+        pedagios_df = pedagios_df[pedagios_df['Tipo de veículo']!= 'Ônibus']
         
         lista_placas = list(pedagios_df['Placa'].unique())
         dict_placas_eixos = busca_eixos(lista_placas, engine)
