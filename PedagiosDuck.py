@@ -6,15 +6,18 @@ from tkinter import filedialog
 from tkinter import messagebox
 import duckdb
 
+# Config de banco
 server = '192.168.0.210'
 database = 'softran_bendo'
 username = 'pedagio'
 password = 'pedagioBendo'
 
+# conexão
 connection_string = f'mssql+pyodbc://{username}:{password}@{server}/{database}?driver=ODBC+Driver+17+for+SQL+Server'
 
 placas = []
 
+# Cria engine
 engine = create_engine(connection_string)
 
 try:
@@ -23,6 +26,7 @@ try:
 except Exception as e:
     print(f"Ocorreu um erro ao tentar conectar ao SQL Server: {e}")
 
+# consultas no sisteman softran
 queryMdfe= """
     SELECT mdfe.CdEmpresa,mdfe.CdSeqMDFe,mdfe.InSitSefaz,mdfe.DtIntegracao,int.nrplaca FROM GTCMFESF mdfe
     left join GTCMFE int on mdfe.CdSeqMDFe = int.CdSeqMDFe and mdfe.CdEmpresa = int.CdEmpresa
@@ -31,6 +35,7 @@ queryMdfe= """
 """
 mdfeEmitidos = pd.read_sql(queryMdfe, engine)
 
+# consultas no sistema atua
 queryMdfeAtua= """
     SELECT man.datahora,man.updated_at,vei.placa
     FROM atua_prod.dbo.manifesto man
@@ -46,6 +51,7 @@ queryPedagios = """select cod_transacao,placa,estabelecimento,endereco,valor_est
 
 contestacoesPendentes = pd.read_sql(queryPedagios,engine)
 
+# Banco DuckDB
 duckdb_conn = duckdb.connect(':memory:')
 duckdb_conn.execute("CREATE TABLE IF NOT EXISTS GTCMFESF (CdEmpresa INTEGER, CdSeqMDFe INTEGER, InSitSefaz INTEGER, DtIntegracao TIMESTAMP, nrPlaca varchar(10))")
 duckdb_conn.execute("INSERT INTO GTCMFESF SELECT * FROM mdfeEmitidos")
@@ -64,11 +70,12 @@ duckdb_conn.execute("""create table if not exists b011ped (cod_transacao varchar
 
 duckdb_conn.execute("INSERT INTO b011ped SELECT * FROM contestacoesPendentes")
 
+
 def verificar_contestacoes(row, duckdb_conn, engine):
     transacao = row['Código da transação']
 
     query_contestacao = f"""
-        SELECT cod_transacao 
+        SELECT cod_transacao
         FROM b011ped
         WHERE cod_transacao = '{transacao}'
     """
@@ -159,7 +166,7 @@ def verificar_mdfe_SP(row, duckdb_conn):
     mdfe_aberto = duckdb_conn.execute(query_mdfe).df()
     return len(mdfe_aberto) > 0
 
-
+# busca eixos dos caminhoes
 def busca_eixos(lista_placas,engine):
     placas_str = ','.join([f"'{placa}'" for placa in lista_placas])
 
