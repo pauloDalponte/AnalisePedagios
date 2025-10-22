@@ -29,8 +29,8 @@ A principal regra de contestação é:
 
 1.  **Clone o repositório:**
     ```bash
-    git clone <url-do-repositorio>
-    cd <nome-do-repositorio>
+    git clone https://github.com/pauloDalponte/AnalisePedagios
+    cd AnalisePedagios
     ```
 
 2.  **Crie um ambiente virtual e ative-o:**
