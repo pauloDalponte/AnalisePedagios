@@ -1,0 +1,9 @@
+streamlit
+pandas
+sqlalchemy
+pyodbc
+duckdb
+altair
+openpyxl
+xlrd
+pytest

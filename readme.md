@@ -50,6 +50,13 @@ A principal regra de contestação é:
 4.  **Configure as Credenciais:**
     * Crie uma pasta `.streamlit` na raiz do projeto.
     * Dentro dela, crie um arquivo chamado `secrets.toml`.
+    ```
+    [db_credentials]
+    server = ""
+    database = ""
+    username = ""
+    password = ""
+    ```
     * Adicione suas credenciais do banco de dados neste arquivo. **Nunca versione este arquivo!**
 
 ## Como Usar
@@ -68,14 +75,22 @@ A principal regra de contestação é:
     * Analise os dados na tabela e no gráfico.
     * Clique no botão "📥 Baixar CSV processado" para salvar os resultados.
 
-## Estrutura do `requirements.txt`
+## Como Realizar os Testes
+
+1.  **Inicie o pytest:**
+    ```bash
+    pytest
+    ```
+
+## Bibliotecas
 
 ```txt
 streamlit
 pandas
 sqlalchemy
-duckdb
 pyodbc
+duckdb
+altair
 openpyxl
 xlrd
-altair
+pytest
