@@ -60,10 +60,9 @@ def test_filter_contestacoes():
     são selecionadas.
     """
     data = {
-        'mdfe_aberto_Atua': [False], 'Quantidade Eixos Vazio': [2], 'CATEG': [5],
-        'mdfe_aberto_Atua': [True], 'Quantidade Eixos Vazio': [2], 'CATEG': [5],
-        'mdfe_aberto_Atua': [False], 'Quantidade Eixos Vazio': [0], 'CATEG': [5],
-        'mdfe_aberto_Atua': [False], 'Quantidade Eixos Vazio': [5], 'CATEG': [5],
+        'mdfe_aberto_Atua': [False, True, False, False],
+        'Quantidade Eixos Vazio': [2, 2, 0, 5],
+        'CATEG': [5, 5, 5, 5],
     }
     input_df = pd.DataFrame(data)
 
