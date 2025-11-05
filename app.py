@@ -8,7 +8,7 @@ from src.processing.processor import PedagioProcessor
 from src.visualization.charts import plot_contestacoes_por_placa, plot_valor_por_dia
 
 st.set_page_config(layout="wide")
-st.title("🚛 Análise de Pedágios (v3 - Interface Fluente)")
+st.title("🚛 Análise de Pedágios")
 
 if 'contestacao_df' not in st.session_state:
     st.session_state.contestacao_df = pd.DataFrame()
