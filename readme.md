@@ -19,6 +19,9 @@ A principal regra de contestação é:
 * **Visualização de Dados:** Exibe uma tabela com os resultados, um resumo financeiro e um gráfico de ocorrências por placa.
 * **Exportação:** Permite o download dos dados filtrados em formato `.csv`.
 
+Video Apresentação 
+<https://docs.google.com/document/d/12dbRXUdQlAslcuXcWpO6UVMtcnwi9D1mAICIwTMJaKM/edit?pli=1&tab=t.0>
+
 ## Requisitos Técnicos
 
 * Python 3.9+
